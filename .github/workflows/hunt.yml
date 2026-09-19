@@ -10,10 +10,14 @@ name: capacity hunt
 
 on:
   schedule:
-    # Every 10 minutes, offset off the :00/:10 boundary. GitHub sheds scheduled
-    # runs hardest at round intervals, and '*/10' delivered nothing at all in
-    # the first hour of this repository's life. Still ten minutes apart, which
-    # keeps us under Oracle's ~5-minute throttle.
+    # Kept as a hopeful backup, not as the mechanism. GitHub has never delivered
+    # a schedule event to this repository — not on '*/10', not on this offset,
+    # not once across an hour and a half of boundaries, with the workflow active
+    # on the default branch and nothing queued or pending. The hunt therefore
+    # does its own timing inside one long job (see below) and this line is free
+    # extra coverage if delivery ever starts. An overlapping run is harmless:
+    # the concurrency group serialises it and hunt.sh refuses to create a second
+    # instance.
     - cron: '4,14,24,34,44,54 * * * *'
   workflow_dispatch:
 
@@ -32,14 +36,17 @@ concurrency:
 jobs:
   hunt:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # A public repository gets unlimited free Actions minutes, so the cheapest
+    # clock that GitHub cannot drop is a job that stays alive and keeps asking.
+    # Just under the six-hour ceiling on a hosted job.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
       - name: Install the OCI CLI
         run: pip install --quiet oci-cli
 
-      - name: Hunt for capacity
+      - name: Hunt for capacity until the job runs out of time
         id: hunt
         env:
           OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
@@ -53,7 +60,27 @@ jobs:
           AD: ${{ secrets.OCI_AD }}
           SSH_KEY: ${{ secrets.INSTANCE_SSH_KEY }}
           RUN_NUMBER: ${{ github.run_number }}
-        run: ./hunt.sh
+        run: |
+          # One attempt every ten minutes until Oracle says yes or the job is
+          # killed. Each attempt writes its outputs to a scratch file and only a
+          # terminal result is promoted to the step's real outputs, so the steps
+          # below see exactly one result rather than a stack of refusals. The
+          # shape counter advances per attempt, which is what alternates
+          # 2 OCPU / 12 GB with 1 OCPU / 6 GB inside a single run.
+          real_output="$GITHUB_OUTPUT"
+          while :; do
+            attempt=$(mktemp)
+            GITHUB_OUTPUT="$attempt" ./hunt.sh
+            RUN_NUMBER=$((RUN_NUMBER + 1))
+            case "$(sed -n 's/^result=//p' "$attempt" | tail -1)" in
+              created|exists)
+                cat "$attempt" >> "$real_output"
+                exit 0
+                ;;
+            esac
+            rm -f "$attempt"
+            sleep 600
+          done
 
       - name: Announce the instance
         if: steps.hunt.outputs.result == 'created'
