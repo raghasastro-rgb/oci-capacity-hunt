@@ -4,7 +4,11 @@
 # train the owner to ignore the one run that matters.
 set -uo pipefail
 
-say() { echo "$*" >> "$GITHUB_STEP_SUMMARY"; }
+# Every message goes to the run log as well as the step summary. The script
+# exits 0 on a capacity refusal, so `gh run list` shows the same green tick
+# whether Oracle said no or handed over a machine; the reason has to be
+# greppable from the log for the outcome to be readable without the browser.
+say() { echo "$*"; echo "$*" >> "$GITHUB_STEP_SUMMARY"; }
 out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
 
 # Never launch a second instance. This is the guard that makes a scheduled
