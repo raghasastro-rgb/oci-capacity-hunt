@@ -10,9 +10,11 @@ name: capacity hunt
 
 on:
   schedule:
-    # Every 10 minutes. GitHub delays scheduled runs under load, so treat this
-    # as "roughly every 10-20 minutes" rather than a guarantee.
-    - cron: '*/10 * * * *'
+    # Every 10 minutes, offset off the :00/:10 boundary. GitHub sheds scheduled
+    # runs hardest at round intervals, and '*/10' delivered nothing at all in
+    # the first hour of this repository's life. Still ten minutes apart, which
+    # keeps us under Oracle's ~5-minute throttle.
+    - cron: '4,14,24,34,44,54 * * * *'
   workflow_dispatch:
 
 # Least privilege: enough to open the issue that tells the owner it worked, and

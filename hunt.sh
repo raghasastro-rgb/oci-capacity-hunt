@@ -22,10 +22,13 @@ if [ -n "$existing" ] && [ "$existing" != "[]" ]; then
   exit 0
 fi
 
-# Alternate shapes between runs: a 4 OCPU / 24 GB block if one is free, a
-# 1 OCPU / 6 GB machine otherwise. Both are inside the Always Free allowance.
+# Alternate shapes between runs: 2 OCPU / 12 GB — half the Always Free ARM
+# allowance, and a far easier ask than the whole of it, because a fragmented
+# host can satisfy two cores when it can never satisfy four — then 1 OCPU /
+# 6 GB. A1.Flex resizes upward later (stop, change shape config, start), so
+# taking the smaller machine now forfeits nothing permanent.
 if [ $((RUN_NUMBER % 2)) -eq 1 ]; then
-  ocpus=4; memory=24
+  ocpus=2; memory=12
 else
   ocpus=1; memory=6
 fi
