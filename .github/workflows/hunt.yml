@@ -1,0 +1,70 @@
+# Hunts for Oracle Cloud Always Free ARM capacity and launches the instance the
+# moment some appears.
+#
+# It lives in a public repository for one reason: GitHub bills Actions minutes
+# on private repositories, and a round-the-clock hunt would eat a month's free
+# quota in days. Nothing of the application is here — only this workflow. The
+# Oracle credentials are repository secrets, which fork pull requests cannot
+# read, and this workflow never runs on pull_request anyway.
+name: capacity hunt
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub delays scheduled runs under load, so treat this
+    # as "roughly every 10-20 minutes" rather than a guarantee.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+# Least privilege: enough to open the issue that tells the owner it worked, and
+# to switch this workflow off afterwards.
+permissions:
+  issues: write
+  actions: write
+
+concurrency:
+  # Two launches racing would create two instances and blow the Always Free
+  # allowance. One hunt at a time, and a late run is dropped rather than queued.
+  group: capacity-hunt
+  cancel-in-progress: false
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Hunt for capacity
+        id: hunt
+        env:
+          OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+          OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          COMPARTMENT: ${{ secrets.OCI_COMPARTMENT }}
+          SUBNET: ${{ secrets.OCI_SUBNET }}
+          IMAGE: ${{ secrets.OCI_IMAGE }}
+          AD: ${{ secrets.OCI_AD }}
+          SSH_KEY: ${{ secrets.INSTANCE_SSH_KEY }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: ./hunt.sh
+
+      - name: Announce the instance
+        if: steps.hunt.outputs.result == 'created'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Instance is up — ${{ steps.hunt.outputs.ip }}" \
+            --body "$(printf 'Oracle finally had capacity.\n\n- **IP**: %s\n- **Shape**: %s\n- **OCID**: %s\n\nConnect with:\n\n```\nssh ubuntu@%s\n```\n\nThe hunt has switched itself off.\n' \
+              "${{ steps.hunt.outputs.ip }}" "${{ steps.hunt.outputs.shape }}" "${{ steps.hunt.outputs.ocid }}" "${{ steps.hunt.outputs.ip }}")"
+
+      - name: Stop hunting
+        if: steps.hunt.outputs.result == 'created' || steps.hunt.outputs.result == 'exists'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable "capacity hunt" || true
